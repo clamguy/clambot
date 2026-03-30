@@ -55,26 +55,26 @@ _PROVIDER_MODELS: dict[str, list[tuple[str, str]]] = {
         ("o4-mini (reasoning, fast)", "openai/o4-mini"),
     ],
     "anthropic": [
-        ("claude-sonnet-4 (recommended)", "anthropic/claude-sonnet-4-20250514"),
-        ("claude-opus-4 (strongest)", "anthropic/claude-opus-4-20250514"),
-        ("claude-haiku-3.5 (fast, cheap)", "anthropic/claude-3-5-haiku-20241022"),
+        ("claude-sonnet-4 (recommended)", "anthropic/claude-sonnet-4"),
+        ("claude-opus-4 (strongest)", "anthropic/claude-opus-4"),
+        ("claude-haiku-4.5 (fast, cheap)", "anthropic/claude-haiku-4.5"),
     ],
     "openrouter": [
-        ("anthropic/claude-sonnet-4 (recommended)", "openrouter/anthropic/claude-sonnet-4-20250514"),
-        ("anthropic/claude-opus-4", "openrouter/anthropic/claude-opus-4-20250514"),
+        ("anthropic/claude-sonnet-4 (recommended)", "openrouter/anthropic/claude-sonnet-4"),
+        ("anthropic/claude-opus-4", "openrouter/anthropic/claude-opus-4"),
         ("openai/gpt-4.1", "openrouter/openai/gpt-4.1"),
         ("openai/gpt-4.1-mini (fast, cheap)", "openrouter/openai/gpt-4.1-mini"),
-        ("google/gemini-2.5-pro", "openrouter/google/gemini-2.5-pro-preview-06-05"),
-        ("google/gemini-2.5-flash (fast, cheap)", "openrouter/google/gemini-2.5-flash-preview-05-20"),
-        ("deepseek/deepseek-chat-v3", "openrouter/deepseek/deepseek-chat-v3-0324"),
+        ("google/gemini-2.5-pro", "openrouter/google/gemini-2.5-pro"),
+        ("google/gemini-2.5-flash (fast, cheap)", "openrouter/google/gemini-2.5-flash"),
+        ("deepseek/deepseek-chat", "openrouter/deepseek/deepseek-chat"),
     ],
     "deepseek": [
         ("deepseek-chat (recommended)", "deepseek/deepseek-chat"),
         ("deepseek-reasoner (reasoning)", "deepseek/deepseek-reasoner"),
     ],
     "gemini": [
-        ("gemini-2.5-pro (recommended)", "gemini/gemini-2.5-pro-preview-06-05"),
-        ("gemini-2.5-flash (fast, cheap)", "gemini/gemini-2.5-flash-preview-05-20"),
+        ("gemini-2.5-pro (recommended)", "gemini/gemini-2.5-pro"),
+        ("gemini-2.5-flash (fast, cheap)", "gemini/gemini-2.5-flash"),
         ("gemini-2.0-flash", "gemini/gemini-2.0-flash"),
     ],
     "groq": [
@@ -89,7 +89,7 @@ _PROVIDER_MODELS: dict[str, list[tuple[str, str]]] = {
 # ``None`` means "use the same model as the primary" (no separate selector).
 _SELECTOR_MODELS: dict[str, str | None] = {
     "openai": "openai/gpt-4.1-nano",
-    "anthropic": "anthropic/claude-3-5-haiku-20241022",
+    "anthropic": "anthropic/claude-haiku-4.5",
     "openrouter": "openrouter/google/gemini-2.0-flash-001",
     "deepseek": None,  # only one cheap model
     "gemini": "gemini/gemini-2.0-flash",
