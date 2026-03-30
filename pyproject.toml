@@ -1,0 +1,84 @@
+[project]
+name = "clambot"
+version = "0.1.0"
+description = "ClamBot — AI agent with WASM sandbox execution"
+license = "MIT"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "amla-sandbox @ git+https://github.com/amlalabs/amla-sandbox@v0.1.7",
+    "pydantic>=2.12.0,<3.0.0",
+    "typer>=0.19.2,<1.0.0",
+    "litellm==1.82.6",
+    "python-telegram-bot>=22.5,<23.0.0",
+    "questionary>=2.1.1,<3.0.0",
+    "pyyaml>=6.0.2,<7.0.0",
+    "python-dotenv>=1.2.1,<2.0.0",
+    "oauth-cli-kit>=0.1.3,<1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.24",
+    "pytest-dotenv>=0.5.2",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[project.scripts]
+clambot = "clambot.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/clamguy/clambot"
+Repository = "https://github.com/clamguy/clambot"
+Documentation = "https://github.com/clamguy/clambot/tree/main/docs"
+"Bug Tracker" = "https://github.com/clamguy/clambot/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["clambot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+env_files = [".env.test"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "BLE", "SIM"]
+ignore = [
+    "BLE001",  # blind-except — intentional resilience pattern throughout codebase
+    "SIM105",  # suppressible-exception — contextlib.suppress() not always clearer
+    "SIM117",  # multiple-with-statements — keep explicit nesting for readability
+    "UP042",   # replace-str-enum — StrEnum migration deferred to avoid breaking changes
+    "E741",    # ambiguous-variable-name — short names (l, O) used intentionally
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "N806",   # non-lowercase-variable-in-function — MockClient naming convention in tests
+    "F841",   # unused-variable — assigned-but-unused in test setup is common
+]
+"clambot/agent/loop.py" = [
+    "E501",   # line-too-long — prompt template strings intentionally long
+]
+"clambot/agent/provider_post_runtime_analysis.py" = [
+    "E501",   # line-too-long — prompt template strings intentionally long
+]
+"clambot/agent/selector.py" = [
+    "E501",   # line-too-long — prompt template strings intentionally long
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+disallow_untyped_defs = false

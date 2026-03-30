@@ -1,0 +1,99 @@
+{
+  "_comment": "ClamBot config — copy to ~/.clambot/config.json or set CLAMBOT_CONFIG env var. Run `clambot onboard` to auto-generate from detected providers.",
+
+  "agents": {
+    "defaults": {
+      "workspace": "~/.clambot/workspace",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "maxTokens": 8192,
+      "temperature": 0.7,
+      "maxToolIterations": 20,
+      "maxSelfFixAttempts": 3,
+      "disabledTools": []
+    },
+    "compaction": {
+      "enabled": true,
+      "targetRatio": 0.5,
+      "reserveTokens": 2000,
+      "summaryMaxTokens": 500,
+      "keepRecentTurns": 4,
+      "maxAutoCompactionsPerTurn": 1
+    },
+    "memoryPromptBudget": {
+      "maxTokens": 4000,
+      "minTokens": 0,
+      "reserveTokens": 500,
+      "maxContextRatio": 0.3,
+      "durableFactsRatio": 0.5
+    },
+    "selector": {
+      "model": "",
+      "retries": 1,
+      "maxTokens": 1024,
+      "temperature": 0.0
+    },
+    "linkContext": {
+      "enabled": true,
+      "maxLinks": 3,
+      "maxCharsPerLink": 8000,
+      "explicitLinksOnly": false,
+      "heuristicPrefetchEnabled": true,
+      "intentUrlInferenceEnabled": false
+    },
+    "approvals": {
+      "enabled": true,
+      "interactive": true,
+      "allowAlways": true,
+      "alwaysGrants": []
+    }
+  },
+
+  "channels": {
+    "telegram": {
+      "enabled": false,
+      "token": "",
+      "allowFrom": [],
+      "replyToMessage": false
+    }
+  },
+
+  "providers": {
+    "_comment": "Fill in API keys for providers you use, or set env vars and run `clambot onboard`.",
+    "openrouter": { "apiKey": "" },
+    "anthropic":  { "apiKey": "" },
+    "openai":     { "apiKey": "" },
+    "ollama":     { "apiBase": "http://localhost:11434" },
+    "deepseek":   { "apiKey": "" },
+    "groq":       { "apiKey": "" },
+    "gemini":     { "apiKey": "" }
+  },
+
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+
+  "tools": {
+    "filesystem": {
+      "restrictToWorkspace": false,
+      "maxReadBytes": 1048576,
+      "maxWriteBytes": 1048576
+    },
+    "transcribe": {
+      "maxDurationSeconds": 7200,
+      "chunkDurationSeconds": 600,
+      "audioFormat": "mp3",
+      "whisperModel": "whisper-large-v3",
+      "whisperApiUrl": "https://api.groq.com/openai/v1/audio/transcriptions"
+    }
+  },
+
+  "heartbeat": {
+    "enabled": false,
+    "interval": 1800
+  },
+
+  "cron": {
+    "enabled": true
+  }
+}

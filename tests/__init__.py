@@ -1,0 +1,1 @@
+"""ClamBot test suite."""
