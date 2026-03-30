@@ -641,22 +641,8 @@ def _connect_api_key_provider(
         typer.echo("No API key provided.", err=True)
         raise typer.Exit(1)
 
-    # ── Step 2: Verify key ────────────────────────────────────────
-    typer.echo("\nVerifying API key...")
+    # ── Step 2: Model selection ───────────────────────────────────
     models = _PROVIDER_MODELS.get(provider, [])
-    if models:
-        test_model = models[0][1]  # first model string
-        ok, err = _verify_api_key(provider, api_key, test_model)
-        if ok:
-            typer.echo("API key verified! ✅\n")
-        else:
-            typer.echo(f"Verification failed: {err}", err=True)
-            proceed = questionary.confirm("Continue anyway?", default=False).ask()
-            if not proceed:
-                raise typer.Exit(1)
-            typer.echo()
-
-    # ── Step 3: Model selection ───────────────────────────────────
     selected_model: str | None = None
     if set_default and models:
         choices = [questionary.Choice(title=label, value=value) for label, value in models]
@@ -680,23 +666,6 @@ def _connect_api_key_provider(
     if selected_model:
         typer.echo(f"Default model: {selected_model}")
     typer.echo(f"Config updated: {resolved_path}")
-
-
-def _verify_api_key(provider: str, api_key: str, model: str) -> tuple[bool, str]:
-    """Verify an API key with a minimal LLM call. Returns (ok, error_msg)."""
-    try:
-        import litellm
-
-        litellm.suppress_debug_info = True
-        resp = litellm.completion(
-            model=model,
-            messages=[{"role": "user", "content": "hi"}],
-            max_tokens=1,
-            api_key=api_key,
-        )
-        return (True, "")
-    except Exception as exc:
-        return (False, str(exc))
 
 
 def _update_api_key_config(
