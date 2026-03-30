@@ -587,9 +587,12 @@ def _update_telegram_config(config_path: Path, token: str, user_id: str) -> None
 # ---------------------------------------------------------------------------
 
 
+_API_KEY_PROVIDERS = ("openrouter", "anthropic", "openai", "deepseek", "gemini", "groq")
+
+
 @provider_app.command("connect")
 def provider_connect(
-    provider: str = typer.Argument(..., help="Provider to connect (e.g. 'ollama')."),
+    provider: str = typer.Argument(..., help="Provider to connect (e.g. 'openrouter', 'ollama')."),
     host: str | None = typer.Option(None, "--host", help="Provider host URL."),
     set_default: bool = typer.Option(
         True, "--set-default/--no-set-default", help="Set the selected model as default."
@@ -599,9 +602,142 @@ def provider_connect(
     """Connect to a provider (interactive setup)."""
     if provider == "ollama":
         _connect_ollama(host=host, set_default=set_default, config_path=config)
+    elif provider in _API_KEY_PROVIDERS:
+        _connect_api_key_provider(provider, set_default=set_default, config_path=config)
     else:
-        typer.echo(f"Unsupported provider: {provider}. Supported: ollama", err=True)
+        supported = ", ".join([*_API_KEY_PROVIDERS, "ollama"])
+        typer.echo(f"Unknown provider: {provider}. Supported: {supported}", err=True)
         raise typer.Exit(1)
+
+
+def _connect_api_key_provider(
+    provider: str,
+    *,
+    set_default: bool = True,
+    config_path: str | None = None,
+) -> None:
+    """Interactive setup for API-key-based providers.
+
+    Steps:
+    1. Prompt for API key (masked input)
+    2. Verify the key with a lightweight LLM call
+    3. Let the user pick a model
+    4. Write provider config and optionally set as default model
+    """
+    import getpass
+
+    import questionary
+
+    from clambot.config.loader import resolve_config_path
+    from clambot.workspace.onboard import _PROVIDER_MODELS, _SELECTOR_MODELS
+
+    display = provider.replace("_", " ").title()
+    typer.echo(f"{display} Provider Setup")
+    typer.echo("=" * 40)
+
+    # ── Step 1: API key ───────────────────────────────────────────
+    api_key = getpass.getpass(f"Enter your {display} API key: ").strip()
+    if not api_key:
+        typer.echo("No API key provided.", err=True)
+        raise typer.Exit(1)
+
+    # ── Step 2: Verify key ────────────────────────────────────────
+    typer.echo("\nVerifying API key...")
+    models = _PROVIDER_MODELS.get(provider, [])
+    if models:
+        test_model = models[0][1]  # first model string
+        ok, err = _verify_api_key(provider, api_key, test_model)
+        if ok:
+            typer.echo("API key verified! ✅\n")
+        else:
+            typer.echo(f"Verification failed: {err}", err=True)
+            proceed = questionary.confirm("Continue anyway?", default=False).ask()
+            if not proceed:
+                raise typer.Exit(1)
+            typer.echo()
+
+    # ── Step 3: Model selection ───────────────────────────────────
+    selected_model: str | None = None
+    if set_default and models:
+        choices = [questionary.Choice(title=label, value=value) for label, value in models]
+        selected_model = questionary.select(
+            "Select a default model:",
+            choices=choices,
+        ).ask()
+        if not selected_model:
+            typer.echo("No model selected.", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"\nSelected: {selected_model}")
+
+    # ── Step 4: Write config ──────────────────────────────────────
+    resolved_path = resolve_config_path(config_path)
+    _update_api_key_config(
+        resolved_path, provider, api_key, selected_model,
+        selector_model=_SELECTOR_MODELS.get(provider),
+    )
+
+    typer.echo(f"\n{display} configured! ✅")
+    if selected_model:
+        typer.echo(f"Default model: {selected_model}")
+    typer.echo(f"Config updated: {resolved_path}")
+
+
+def _verify_api_key(provider: str, api_key: str, model: str) -> tuple[bool, str]:
+    """Verify an API key with a minimal LLM call. Returns (ok, error_msg)."""
+    try:
+        import litellm
+
+        litellm.suppress_debug_info = True
+        resp = litellm.completion(
+            model=model,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1,
+            api_key=api_key,
+        )
+        return (True, "")
+    except Exception as exc:
+        return (False, str(exc))
+
+
+def _update_api_key_config(
+    config_path: Path,
+    provider: str,
+    api_key: str,
+    default_model: str | None = None,
+    selector_model: str | None = None,
+) -> None:
+    """Write API key provider settings to config.json."""
+    config_path = Path(config_path)
+    existing: dict = {}
+    if config_path.exists():
+        try:
+            existing = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Set provider API key
+    providers = existing.setdefault("providers", {})
+    prov_cfg = providers.setdefault(provider, {})
+    prov_cfg["apiKey"] = api_key
+
+    # Set default model
+    if default_model:
+        agents = existing.setdefault("agents", {})
+        defaults = agents.setdefault("defaults", {})
+        defaults["model"] = default_model
+
+    # Set selector model
+    if selector_model and default_model:
+        agents = existing.setdefault("agents", {})
+        selector = agents.setdefault("selector", {})
+        if not selector.get("model"):
+            selector["model"] = selector_model
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _connect_ollama(
@@ -782,7 +918,7 @@ def provider_login(
             raise typer.Exit(1) from exc
     else:
         typer.echo(f"Unknown provider: {provider}. Supported: openai-codex")
-        typer.echo("(For Ollama, use: clambot provider connect ollama)")
+        typer.echo("(For API key providers, use: uv run clambot provider connect <name>)")
 
 
 def _set_default_model(config_path: Path, model: str) -> None:
