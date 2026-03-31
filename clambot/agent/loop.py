@@ -507,6 +507,67 @@ class AgentLoop:
         )
 
     # ------------------------------------------------------------------
+    # Direct tool execution (agent-level tools: cron, web_fetch)
+    # ------------------------------------------------------------------
+
+    _DIRECT_TOOLS: frozenset[str] = frozenset({"cron", "web_fetch"})
+
+    async def _execute_direct_tool_from_script(
+        self,
+        message: str,
+        script: str,
+        declared_tools: list[str],
+        events: list[dict[str, Any]],
+    ) -> AgentResult:
+        """Execute agent-only tool calls parsed from a generated script.
+
+        The LLM already generated the script with tool calls like
+        ``await cron({action: "list"})``. We parse the arguments and
+        execute the tools directly via the Python tool registry — no
+        WASM sandbox needed.
+        """
+        if not self._tool_registry:
+            return AgentResult(content="No tools available.", status="failed", events=events)
+
+        results: list[str] = []
+        for tool_name in declared_tools:
+            tool = self._tool_registry.get_tool(tool_name)
+            if tool is None:
+                results.append(f"Error: tool '{tool_name}' not found")
+                continue
+
+            # Parse tool args from the script: await tool_name({...})
+            args = _extract_tool_args_from_script(script, tool_name)
+
+            try:
+                result = tool.execute(args)
+                if isinstance(result, str):
+                    results.append(result)
+                else:
+                    results.append(_json.dumps(result, ensure_ascii=False, default=str))
+            except Exception as exc:
+                results.append(f"Error executing {tool_name}: {exc}")
+
+        raw_output = "\n".join(results)
+
+        # Use post-runtime analyzer to format the result for the user
+        if self._analyzer and raw_output:
+            analysis = await self._analyzer.analyze(
+                message=message,
+                clam={"script": "(direct tool call)", "name": "direct-tool"},
+                runtime_result={"output": raw_output, "error": "", "stderr": ""},
+            )
+            if analysis.decision == PostRuntimeAnalysisDecision.ACCEPT and analysis.output:
+                return AgentResult(content=analysis.output, status="completed", events=events)
+
+        return AgentResult(
+            content=raw_output or "No scheduled tasks.",
+            status="completed",
+            events=events,
+        )
+
+
+    # ------------------------------------------------------------------
     # Single-task execution (select → generate/load → execute → analyze)
     # ------------------------------------------------------------------
 
@@ -672,6 +733,26 @@ class AgentLoop:
 
         # Apply grounding rules
         gen_result = apply_grounding_rules(gen_result)
+
+        # Intercept: if generated clam ONLY uses agent-only tools (e.g. cron),
+        # execute directly in the loop instead of the sandbox.
+        if (
+            gen_result.script
+            and not gen_result.error
+            and gen_result.declared_tools
+            and all(t in self._DIRECT_TOOLS for t in gen_result.declared_tools)
+        ):
+            logger.info(
+                "[attempt %d] Agent-only tools %s — executing directly",
+                attempt,
+                gen_result.declared_tools,
+            )
+            return await self._execute_direct_tool_from_script(
+                message=message,
+                script=gen_result.script,
+                declared_tools=gen_result.declared_tools,
+                events=events,
+            )
 
         if gen_result.error:
             logger.warning(
@@ -1121,3 +1202,34 @@ class AgentLoop:
         lines.append(metadata.get("description", request))
 
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Helpers (module-level)
+# ---------------------------------------------------------------------------
+
+
+def _extract_tool_args_from_script(script: str, tool_name: str) -> dict[str, Any]:
+    """Extract tool call arguments from a generated JavaScript script.
+
+    Parses patterns like ``await tool_name({key: "value", ...})`` and
+    returns the args dict.  Falls back to ``{}`` if parsing fails.
+    """
+    import re
+
+    # Match: await tool_name({ ... })  or  tool_name({ ... })
+    pattern = rf"(?:await\s+)?{re.escape(tool_name)}\s*\(\s*(\{{[^}}]*\}})\s*\)"
+    match = re.search(pattern, script, re.DOTALL)
+    if not match:
+        return {}
+
+    raw = match.group(1)
+    # JS object → JSON: add quotes around bare keys
+    json_str = re.sub(r'(\w+)\s*:', r'"\1":', raw)
+    # Replace single quotes with double quotes
+    json_str = json_str.replace("'", '"')
+
+    try:
+        return _json.loads(json_str)
+    except _json.JSONDecodeError:
+        return {}

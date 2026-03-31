@@ -385,21 +385,37 @@ class ClamRuntime:
         return {"error": f"No tool registry configured for: {method}"}
 
     # Tools that are handled by the agent loop itself and must NOT be
+    # Tools that are handled directly by the agent loop, not by clam
+    # code in the WASM sandbox.  The loop executes these itself.
+    _AGENT_ONLY_TOOLS: frozenset[str] = frozenset({"cron"})
+
     def _resolve_tool_schemas(
         self,
         declared_tools: list[str] | list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Resolve tool schemas from declared tool names or schema dicts."""
+        """Resolve tool schemas from declared tool names or schema dicts.
+
+        Agent-only tools (e.g. ``cron``) are excluded — they are executed
+        directly by the agent loop, not by clam code in the sandbox.
+        """
         if not declared_tools:
             if self._tool_registry is not None:
-                return list(self._tool_registry.get_schemas())
+                return [
+                    s
+                    for s in self._tool_registry.get_schemas()
+                    if s.get("function", {}).get("name") not in self._AGENT_ONLY_TOOLS
+                ]
             return []
 
         schemas: list[dict[str, Any]] = []
         for tool in declared_tools:
             if isinstance(tool, dict):
-                schemas.append(tool)
+                name = tool.get("function", {}).get("name", "")
+                if name not in self._AGENT_ONLY_TOOLS:
+                    schemas.append(tool)
             elif isinstance(tool, str) and self._tool_registry is not None:
+                if tool in self._AGENT_ONLY_TOOLS:
+                    continue
                 tool_obj = self._tool_registry.get_tool(tool)
                 if tool_obj is not None:
                     schemas.append(tool_obj.to_schema())
