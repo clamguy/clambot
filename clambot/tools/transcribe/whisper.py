@@ -64,6 +64,10 @@ def transcribe_files(
     return " ".join(segments)
 
 
+_MAX_RETRIES = 4
+_INITIAL_BACKOFF = 2.0  # seconds
+
+
 def _transcribe_single(
     client: httpx.Client,
     path: Path,
@@ -74,6 +78,8 @@ def _transcribe_single(
 ) -> str:
     """Transcribe a single audio file and return the text.
 
+    Retries with exponential backoff on 429 (rate limit) responses.
+
     Args:
         client: Active :class:`httpx.Client` to reuse across chunks.
         path: Path to the audio file to transcribe.
@@ -83,23 +89,38 @@ def _transcribe_single(
         api_url: Transcription API endpoint URL.
 
     Raises:
-        httpx.HTTPStatusError: On non-2xx responses.
+        httpx.HTTPStatusError: On non-2xx, non-429 responses or
+            after exhausting retries.
         KeyError: If the response JSON lacks a ``text`` field.
     """
+    import time
+
     headers = {"Authorization": f"Bearer {api_key}"}
 
     data: dict[str, str] = {"model": model}
     if language:
         data["language"] = language
 
-    with open(path, "rb") as f:
-        files = {"file": (path.name, f, "application/octet-stream")}
-        response = client.post(
-            api_url,
-            headers=headers,
-            data=data,
-            files=files,
-        )
+    for attempt in range(_MAX_RETRIES + 1):
+        with open(path, "rb") as f:
+            files = {"file": (path.name, f, "application/octet-stream")}
+            response = client.post(
+                api_url,
+                headers=headers,
+                data=data,
+                files=files,
+            )
 
+        if response.status_code == 429 and attempt < _MAX_RETRIES:
+            wait = _INITIAL_BACKOFF * (2 ** attempt)
+            logger.info("Rate limited on %s — retrying in %.1fs (attempt %d/%d)",
+                        path.name, wait, attempt + 1, _MAX_RETRIES)
+            time.sleep(wait)
+            continue
+
+        response.raise_for_status()
+        return response.json()["text"]
+
+    # Should not reach here, but satisfy type checker
     response.raise_for_status()
     return response.json()["text"]
