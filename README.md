@@ -11,6 +11,9 @@
 
 ✨ Inspired by [OpenClaw](https://github.com/openclaw/openclaw) and [nanobot](https://github.com/HKUDS/nanobot).
 
+> [!IMPORTANT]
+> ClamBot is tested primarily with **OpenAI Codex** and this is the recommended provider for the best out-of-the-box reliability.
+
 🔒 Every other agent framework runs LLM-generated code directly on your machine. ClamBot isolates it:
 
 1. 🤖 LLM generates a JavaScript **"clam"** (named, versioned, reusable script)
@@ -28,7 +31,7 @@
 
 🔧 **Self-Fix Loop** — up to 3 automatic retries with LLM-guided fix instructions on runtime failures
 
-🤖 **Multi-Provider LLM** — OpenRouter, Anthropic, OpenAI, Gemini, DeepSeek, Ollama, OpenAI Codex (OAuth), and custom endpoints
+🤖 **Multi-Provider LLM** — tested path with OpenAI Codex (OAuth, recommended) plus OpenRouter, Anthropic, OpenAI, Gemini, DeepSeek, Ollama, and custom endpoints
 
 💬 **Telegram Integration** — typing indicators, phase status messages, MarkdownV2 rendering, inline approval keyboards, file uploads
 
@@ -43,6 +46,19 @@
 🌐 **SSRF Protection** — private IP blocking on all outbound HTTP tools
 
 📝 **Session Compaction** — automatic LLM-summarized compaction to prevent context window overflow
+
+## ✅ Out-of-the-Box User Features
+
+After onboarding, users can immediately:
+
+- 💬 Chat in CLI (single-turn and interactive REPL modes)
+- 📱 Use Telegram with typing indicators, approvals, status updates, and file uploads
+- 🌐 Fetch web pages and call HTTP APIs
+- 🎙️ Transcribe YouTube/media audio and summarize/translate the transcript
+- 📄 Extract text from PDF files (including uploaded files)
+- ⏰ Schedule reminders and recurring jobs (`cron`, `every`, `at`)
+- 🧠 Use long-term memory recall + searchable history
+- 🔑 Add/store secrets and approve tool access interactively
 
 ## 🏗️ Architecture
 
@@ -85,13 +101,14 @@ cd clambot
 ## 🚀 Quick Start
 
 > [!TIP]
-> Get API keys: [OpenRouter](https://openrouter.ai/keys) (recommended, access to all models) · [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com)
+> Recommended: **OpenAI Codex** (OAuth, tested path) via `uv run clambot provider login openai-codex`.
+> API-key providers are also supported: [OpenRouter](https://openrouter.ai/keys) · [Anthropic](https://console.anthropic.com) · [OpenAI](https://platform.openai.com)
 
-**1. 🎬 Initialize** — auto-discovers API keys from environment and sets up workspace:
+**1. 🎬 Initialize** — auto-detects configured providers (API keys and Codex OAuth) and sets up workspace:
 
 ```bash
-# Set your API key (provider auto-detected by onboard)
-export OPENROUTER_API_KEY="sk-or-v1-xxx"
+# Recommended: OpenAI Codex (OAuth)
+uv run clambot provider login openai-codex
 
 # Initialize workspace + config
 uv run clambot onboard
@@ -160,23 +177,23 @@ If you prefer to configure manually, add the following to `~/.clambot/config.jso
 
 ## 🤖 Providers
 
-ClamBot supports multiple LLM backends through a registry-driven provider layer. Set an API key via environment and run `uv run clambot onboard` — the provider is auto-detected.
+ClamBot supports multiple LLM backends through a registry-driven provider layer. Use Codex OAuth or set provider API keys, then run `uv run clambot onboard` — provider/model selection is auto-detected.
 
 | Provider | Purpose | Setup |
 |----------|---------|-------|
-| `openrouter` | 🌐 LLM (recommended, access to all models) | `export OPENROUTER_API_KEY=sk-or-...` |
+| `openai_codex` | ⚡ LLM (recommended, primary tested path) | `uv run clambot provider login openai-codex` |
+| `openrouter` | 🌐 LLM gateway (optional) | `export OPENROUTER_API_KEY=sk-or-...` |
 | `anthropic` | 🧠 LLM (Claude direct) | `export ANTHROPIC_API_KEY=sk-ant-...` |
 | `openai` | 💡 LLM (GPT direct) | `export OPENAI_API_KEY=sk-...` |
 | `deepseek` | 🔬 LLM (DeepSeek direct) | `export DEEPSEEK_API_KEY=...` |
 | `gemini` | 💎 LLM (Gemini direct) | `export GEMINI_API_KEY=...` |
 | `groq` | 🎙️ LLM + voice transcription (Whisper) | `export GROQ_API_KEY=...` |
 | `ollama` | 🏠 LLM (local, any model) | `ollama serve` (auto-probed) |
-| `openai_codex` | ⚡ LLM (Codex, OAuth) | `uv run clambot provider login openai-codex` |
 | `custom` | 🔌 Any OpenAI-compatible endpoint | Config only — see below |
 
 ```bash
-# Example: set up with OpenRouter
-export OPENROUTER_API_KEY="sk-or-v1-xxx"
+# Example: set up with OpenAI Codex (recommended)
+uv run clambot provider login openai-codex
 uv run clambot onboard    # auto-detects provider + model
 uv run clambot status     # verify provider is ready ✅
 uv run clambot agent      # start chatting 💬
@@ -286,37 +303,22 @@ Configure pre-approved patterns in `~/.clambot/config.json`:
 }
 ```
 
-### 🔌 MCP (Model Context Protocol)
-
-ClamBot supports MCP — connect external tool servers and use them as native agent tools. Add to `~/.clambot/config.json`:
-
-```json
-{
-  "tools": {
-    "mcpServers": {
-      "filesystem": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]
-      }
-    }
-  }
-}
-```
-
 ## 🧰 Built-In Tools
 
-All tools are callable from generated JavaScript clams via `await tool_name({...})`.
+All tools below are available out of the box and callable from generated JavaScript clams via `await tool_name({...})`.
 
 | Tool | Description |
 |------|-------------|
 | 📁 `fs` | Filesystem operations: read, write, edit, list |
 | 🌐 `http_request` | Authenticated HTTP with secret-based bearer tokens |
 | 🔗 `web_fetch` | URL content fetching |
+| 🎙️ `transcribe` | Download + transcribe media audio (YouTube and other yt-dlp supported sources) |
+| 📄 `pdf_reader` | Extract text from PDF files |
 | ⏰ `cron` | Schedule management: add, list, remove jobs |
 | 🔑 `secrets_add` | Secret storage with multiple resolution sources |
 | 🧠 `memory_recall` | Read MEMORY.md durable facts |
 | 🔍 `memory_search_history` | Search HISTORY.md interaction summaries |
-| 📢 `echo` | Debug output tool |
+| 📢 `echo` | Debug output tool (optional) |
 
 ## 🖥️ CLI Reference
 
