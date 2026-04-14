@@ -518,7 +518,7 @@ class TestPackageInstallability:
         import clambot
 
         assert hasattr(clambot, "__version__")
-        assert clambot.__version__ == "0.1.0"
+        assert clambot.__version__ == "0.1.2"
 
     def test_core_subpackages_importable(self) -> None:
         """All core sub-packages are importable."""

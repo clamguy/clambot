@@ -53,6 +53,15 @@ class MemoryRecallTool(BuiltinTool):
         return "Recall stored memory (long-term facts from MEMORY.md)."
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time memory_recall usage."""
+        return [
+            "Use when user asks about saved preferences/facts from long-term memory.",
+            "This tool takes no arguments.",
+            "Returns full MEMORY.md text (or empty string if nothing is stored).",
+        ]
+
+    @property
     def schema(self) -> dict[str, Any]:
         """JSON Schema for the ``memory_recall`` tool parameters.
 

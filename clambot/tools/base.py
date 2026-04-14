@@ -92,6 +92,20 @@ class BuiltinTool(ABC):
         """
         return {}
 
+    @property
+    def usage_instructions(self) -> list[str]:
+        """Optional generation-time usage instructions for this tool.
+
+        These notes are injected into the agent system prompt when the tool is
+        available, so tool-specific guidance stays close to the tool
+        implementation (pluggable metadata) rather than being hardcoded in the
+        prompt builder.
+
+        Returns:
+            Ordered list of short usage notes. Empty by default.
+        """
+        return []
+
     # ------------------------------------------------------------------
     # Concrete helpers
     # ------------------------------------------------------------------

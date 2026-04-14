@@ -209,6 +209,32 @@ def test_tool_schemas_rendered_for_all_tools() -> None:
     assert "Read a file" in prompt
 
 
+def test_tool_usage_instructions_rendered_when_provided() -> None:
+    """Per-tool usage instructions are injected into the prompt."""
+    tools = [
+        {
+            "function": {
+                "name": "transcribe",
+                "description": "Transcribe media audio",
+                "parameters": {"type": "object", "properties": {"url": {"type": "string"}}},
+            }
+        }
+    ]
+    usage = {
+        "transcribe": [
+            "Use for media URLs when speech transcript text is needed.",
+            "Check result.error before reading result.transcript.",
+        ]
+    }
+
+    builder = _make_builder()
+    prompt = builder.build_system_prompt(tools=tools, tool_usage_instructions=usage)
+
+    assert "Usage Instructions:" in prompt
+    assert "Use for media URLs when speech transcript text is needed." in prompt
+    assert "Check result.error before reading result.transcript." in prompt
+
+
 # ---------------------------------------------------------------------------
 # Clam catalog tests
 # ---------------------------------------------------------------------------

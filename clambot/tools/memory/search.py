@@ -56,6 +56,15 @@ class MemorySearchHistoryTool(BuiltinTool):
         return "Search conversation history for specific topics or information."
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time memory_search_history usage."""
+        return [
+            "Use for finding prior conversation entries matching a topic.",
+            "Pass query and optional limit to bound result count.",
+            "Returns an array of matching history snippets (newest ordering depends on file layout).",
+        ]
+
+    @property
     def schema(self) -> dict[str, Any]:
         """JSON Schema for the ``memory_search_history`` tool parameters."""
         return {

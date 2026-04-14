@@ -2,7 +2,7 @@
 
 Provides :class:`TranscribeTool`, a :class:`~clambot.tools.base.BuiltinTool`
 subclass that orchestrates the full transcription pipeline:
-URL → yt-dlp download → optional ffmpeg chunking → Groq Whisper API → text.
+URL → yt-dlp download → optional ffmpeg chunking → Whisper API → text.
 """
 
 from __future__ import annotations
@@ -33,14 +33,14 @@ class TranscribeTool(BuiltinTool):
     """Built-in tool that downloads audio from a URL and transcribes it.
 
     Uses yt-dlp to extract audio, ffmpeg to chunk files exceeding 25 MB,
-    and Groq's Whisper API for speech-to-text transcription.
+    and a configurable Whisper API for speech-to-text transcription.
 
     Args:
         config: Optional tool configuration.  Uses sensible defaults when
                 ``None`` is passed.
-        secret_store: Optional :class:`SecretStore` for resolving the Groq
-                API key.  Falls back to ``GROQ_API_KEY`` env var when
-                ``None`` or when the key is not in the store.
+        secret_store: Optional :class:`SecretStore` for resolving the
+                ``GROQ_API_KEY`` secret used by OpenAI-compatible Whisper
+                endpoints.
     """
 
     def __init__(
@@ -64,6 +64,16 @@ class TranscribeTool(BuiltinTool):
     def description(self) -> str:
         """Human-readable description surfaced to the LLM."""
         return "Download audio from a URL and transcribe it to text using Whisper."
+
+    @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time transcribe usage."""
+        return [
+            "Use for media URLs (YouTube/Vimeo/etc.) when speech transcript text is needed.",
+            "Input is {url, language?}; language is an optional ISO 639-1 hint.",
+            "Check result.error before reading result.transcript.",
+            "Return result.transcript text for downstream summarize/translate steps.",
+        ]
 
     @property
     def schema(self) -> dict[str, Any]:
@@ -126,11 +136,11 @@ class TranscribeTool(BuiltinTool):
     def execute(self, args: dict[str, Any]) -> dict[str, Any]:
         """Execute the full transcription pipeline.
 
-        1. Resolve Groq API key from environment.
+        1. Resolve optional API key from secret store/env.
         2. Download audio via yt-dlp.
         3. Guard: check duration against configured maximum.
         4. Chunk large files via ffmpeg if needed.
-        5. Transcribe all chunks via Groq Whisper.
+        5. Transcribe all chunks via configured Whisper endpoint.
         6. Return result dict with url, title, duration, transcript, chunk_count.
 
         All exceptions are caught and returned as ``{"error": "..."}`` dicts.
@@ -138,13 +148,14 @@ class TranscribeTool(BuiltinTool):
         url = args.get("url", "")
         language = args.get("language")
 
-        # Resolve Groq API key: SecretStore → env var → error
+        # Resolve API key (used by OpenAI-compatible endpoints).
         api_key = ""
         if self._secret_store is not None:
             api_key = self._secret_store.get("GROQ_API_KEY") or ""
         if not api_key:
             api_key = os.environ.get("GROQ_API_KEY", "")
-        if not api_key:
+
+        if self._config.whisper_api_style == "openai" and not api_key:
             return {
                 "error": "Secret 'GROQ_API_KEY' not found",
             }
@@ -183,6 +194,8 @@ class TranscribeTool(BuiltinTool):
                     model=self._config.whisper_model,
                     language=language,
                     api_url=self._config.whisper_api_url,
+                    api_style=self._config.whisper_api_style,
+                    request_timeout=self._config.whisper_request_timeout_seconds,
                 )
 
                 return {

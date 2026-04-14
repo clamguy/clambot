@@ -41,6 +41,7 @@ class ContextBuilder:
         docs: str = "",
         memory: str = "",
         tools: list[dict[str, Any]] | None = None,
+        tool_usage_instructions: dict[str, list[str]] | None = None,
         clam_catalog: list[Any] | None = None,
         link_context: str = "",
         generation_mode: bool = True,
@@ -51,6 +52,8 @@ class ContextBuilder:
             docs: Concatenated workspace docs content.
             memory: MEMORY.md content.
             tools: Tool schema list from the registry.
+            tool_usage_instructions: Optional per-tool usage notes keyed by
+                tool name.
             clam_catalog: List of ClamSummary objects.
             link_context: Pre-fetched link context.
             generation_mode: Whether to include generation rules.
@@ -78,7 +81,7 @@ class ContextBuilder:
             sections.append(catalog_section)
 
         # Tool schemas
-        tool_section = self._build_tool_section(tools)
+        tool_section = self._build_tool_section(tools, tool_usage_instructions)
         if tool_section:
             sections.append(tool_section)
 
@@ -206,7 +209,11 @@ class ContextBuilder:
 
         return "\n".join(lines)
 
-    def _build_tool_section(self, tools: list[dict[str, Any]] | None) -> str:
+    def _build_tool_section(
+        self,
+        tools: list[dict[str, Any]] | None,
+        tool_usage_instructions: dict[str, list[str]] | None = None,
+    ) -> str:
         """Build the tool schemas section.
 
         Renders each tool's name, description, parameters, and — when
@@ -225,9 +232,15 @@ class ContextBuilder:
             desc = func.get("description", "")
             params = func.get("parameters", {})
             returns = func.get("returns")
+            usage = (tool_usage_instructions or {}).get(name, [])
 
             lines.append(f"### {name}")
             lines.append(f"{desc}\n")
+            if usage:
+                lines.append("Usage Instructions:")
+                for item in usage:
+                    lines.append(f"- {item}")
+                lines.append("")
             lines.append(f"Parameters: ```json\n{json.dumps(params, indent=2)}\n```\n")
             if returns:
                 lines.append(f"Returns: ```json\n{json.dumps(returns, indent=2)}\n```\n")
@@ -272,6 +285,9 @@ It CANNOT run shell commands, manage processes, install software, open/close win
 interact with the desktop, manage system services, or use OS-specific APIs (Win32, \
 PowerShell, bash, etc.). If the user asks for any of these, respond with: \
 `{"script": "return 'I cannot perform OS-level operations (close windows, manage processes, install software). I can help with data processing, web requests, file operations, and scheduling.';", "declared_tools": [], "inputs": {}, "metadata": {"description": "Explains sandbox limitations", "reusable": false}}`
+14. **Media transcripts must use transcribe** — For requests about YouTube/video/audio \
+transcription, call `transcribe` with the media URL. Do NOT use `web_fetch` to extract \
+speech transcripts from media pages.
 
 ### Inputs and `run(args)` pattern
 

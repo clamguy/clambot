@@ -1,7 +1,7 @@
 <div align="center">
   <h1>🐚 ClamBot: Secure AI Agent with WASM Sandbox Execution</h1>
   <p>
-    <img src="https://img.shields.io/badge/version-0.1.1-blue" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.1.2-blue" alt="Version">
     <img src="https://img.shields.io/badge/python-≥3.11-blue" alt="Python">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   </p>

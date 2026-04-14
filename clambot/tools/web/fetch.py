@@ -111,6 +111,16 @@ class WebFetchTool(BuiltinTool):
         return "Fetch and extract content from a URL."
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time web_fetch usage."""
+        return [
+            "Use for webpage/article text extraction, not strict JSON APIs.",
+            "Pass url (and optionally max_chars for long pages).",
+            "Return response.content (useful text), not the full metadata object.",
+            "Do not use for video/audio speech transcription; use transcribe instead.",
+        ]
+
+    @property
     def returns(self) -> dict[str, Any]:
         """Return value schema for ``web_fetch``."""
         return {

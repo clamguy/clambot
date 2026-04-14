@@ -60,6 +60,7 @@ class AmlaSandboxRuntimeBackend:
     """
 
     STDIN_THRESHOLD = 7168  # 7 KB
+    SAFE_OUTPUT_CHUNK_SIZE = 900
 
     def __init__(
         self,
@@ -143,8 +144,15 @@ class AmlaSandboxRuntimeBackend:
             tool_handler=handler,
         )
 
-        # Inject inputs into the script
+        # Inject inputs and wrap output emission so large return values are
+        # printed in small console chunks.  This avoids JSON decode failures
+        # in older amla-sandbox bridge builds when a single return payload is
+        # too large for one runtime-step response.
         exec_script = _inject_inputs(script, inputs)
+        exec_script = _wrap_script_with_chunked_output(
+            exec_script,
+            chunk_size=self.SAFE_OUTPUT_CHUNK_SIZE,
+        )
 
         # Execute — the Sandbox auto-pipes large scripts via stdin
         try:
@@ -261,6 +269,44 @@ def _inject_inputs(
         return f"{preamble}\n{script}\nreturn await run(args);"
 
     return f"{preamble}\n{script}"
+
+
+def _wrap_script_with_chunked_output(script: str, chunk_size: int = 900) -> str:
+    """Wrap script so return values are emitted in safe-sized console chunks.
+
+    The amla-sandbox bridge in v0.1.7 can fail with ``JSONDecodeError`` when a
+    single returned string is large (for example long transcripts).  This wrapper
+    executes the user script inside an inner async function, captures its return
+    value, and emits it via ``console.log`` chunks to keep each host-op payload
+    comfortably below bridge limits.
+    """
+    return (
+        f"const __clambot_chunk_size = {int(chunk_size)};\n"
+        "const __clambot_emit_value = (value) => {\n"
+        "  if (value === undefined) return;\n"
+        "  let text;\n"
+        "  if (typeof value === 'string') {\n"
+        "    text = value;\n"
+        "  } else {\n"
+        "    try {\n"
+        "      text = JSON.stringify(value);\n"
+        "    } catch (_err) {\n"
+        "      text = String(value);\n"
+        "    }\n"
+        "  }\n"
+        "  if (text.length <= __clambot_chunk_size) {\n"
+        "    console.log(text);\n"
+        "    return;\n"
+        "  }\n"
+        "  for (let i = 0; i < text.length; i += __clambot_chunk_size) {\n"
+        "    console.log(text.slice(i, i + __clambot_chunk_size));\n"
+        "  }\n"
+        "};\n"
+        "const __clambot_result = await (async () => {\n"
+        f"{script}\n"
+        "})();\n"
+        "__clambot_emit_value(__clambot_result);"
+    )
 
 
 # ---------------------------------------------------------------------------

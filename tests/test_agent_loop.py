@@ -32,7 +32,7 @@ from clambot.agent.generation_adapter import (
     normalize_generation_response,
 )
 from clambot.agent.generation_grounding import apply_grounding_rules
-from clambot.agent.loop import AgentLoop
+from clambot.agent.loop import AgentLoop, AgentResult
 from clambot.agent.post_runtime_analysis import PostRuntimeAnalysisDecision
 from clambot.agent.post_runtime_analysis_adapter import (
     AnalysisResult,
@@ -820,6 +820,248 @@ class TestSelfFixLoop:
         second_call = call_messages[1]
         user_msg = [m for m in second_call if m["role"] == "user"]
         assert any("SELF_FIX_RUNTIME" in m["content"] for m in user_msg)
+        assert any("Return ONLY a JSON object" in m["content"] for m in user_msg)
+
+    @pytest.mark.asyncio
+    async def test_grounding_rejection_self_fix_includes_bad_output(self, tmp_path: Path) -> None:
+        """Grounding retries include rejected non-code output in self-fix context."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        call_messages: list[list] = []
+
+        first_bad = "Вот краткое содержание видео"
+
+        responses = [
+            LLMResponse(content=first_bad),
+            LLMResponse(
+                content=json.dumps(
+                    {
+                        "script": 'async function run() { return "ok"; }',
+                        "declared_tools": [],
+                        "metadata": {"description": "fixed"},
+                    }
+                )
+            ),
+        ]
+
+        async def mock_acomplete(messages, **kwargs):
+            call_messages.append(messages)
+            return responses[len(call_messages) - 1]
+
+        mock_provider = AsyncMock()
+        mock_provider.acomplete = AsyncMock(side_effect=mock_acomplete)
+
+        mock_runtime = AsyncMock()
+        mock_runtime.execute = AsyncMock(
+            return_value=MagicMock(output="ok", error="", stderr="", timed_out=False)
+        )
+
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze = AsyncMock(
+            return_value=AnalysisResult(
+                decision=PostRuntimeAnalysisDecision.ACCEPT,
+                output="ok",
+            )
+        )
+
+        from clambot.agent.provider_generation import ProviderBackedClamGenerator
+
+        generator = ProviderBackedClamGenerator(provider=mock_provider)
+
+        config = MagicMock()
+        config.agents.defaults.max_self_fix_attempts = 3
+
+        mock_selector = AsyncMock()
+        mock_selector.select = AsyncMock(
+            return_value=SelectionResult(decision="generate_new", reason="Test")
+        )
+
+        loop = AgentLoop(
+            selector=mock_selector,
+            generator=generator,
+            runtime=mock_runtime,
+            analyzer=mock_analyzer,
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=config,
+        )
+
+        result = await loop.process_turn("fetch transcript")
+
+        assert result.status == "completed"
+        assert mock_provider.acomplete.call_count == 2
+        assert mock_runtime.execute.call_count == 1
+
+        second_call = call_messages[1]
+        user_msg = [m for m in second_call if m["role"] == "user"]
+        assert any("GROUNDING ERROR" in m["content"] for m in user_msg)
+        assert any("BAD OUTPUT" in m["content"] for m in user_msg)
+        assert any(first_bad in m["content"] for m in user_msg)
+
+
+class TestTaskPlanningExecution:
+    """Tests for planned multi-step execution behavior."""
+
+    def test_direct_tools_only_cron(self) -> None:
+        """Only cron is treated as an agent-only direct tool."""
+        assert AgentLoop._DIRECT_TOOLS == frozenset({"cron"})
+
+    @pytest.mark.asyncio
+    async def test_execute_subtask_drops_top_level_link_context(self, tmp_path: Path) -> None:
+        """Execute subtasks should not inherit top-level pre-fetched link context."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        loop = AgentLoop(
+            selector=AsyncMock(),
+            generator=AsyncMock(),
+            runtime=AsyncMock(),
+            analyzer=AsyncMock(),
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=MagicMock(),
+        )
+
+        mock_single_task = AsyncMock(
+            return_value=AgentResult(
+                content="raw transcript",
+                status="completed",
+            )
+        )
+        loop._execute_single_task = mock_single_task  # type: ignore[method-assign]
+
+        result = await loop._execute_planned_tasks(
+            plan=[{"action": "execute", "task": "Fetch transcript from URL"}],
+            history=None,
+            system_prompt="system",
+            link_context="TOP_LEVEL_LINK_CONTEXT",
+            on_event=None,
+            events=[],
+        )
+
+        assert result.status == "completed"
+        assert mock_single_task.call_count == 1
+        call_kwargs = mock_single_task.call_args.kwargs
+        assert call_kwargs["link_context"] == ""
+
+    @pytest.mark.asyncio
+    async def test_execute_transform_returns_transformed_output_only(self, tmp_path: Path) -> None:
+        """Execute+transform plans should not include raw execute output in final reply."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        loop = AgentLoop(
+            selector=AsyncMock(),
+            generator=AsyncMock(),
+            runtime=AsyncMock(),
+            analyzer=AsyncMock(),
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=MagicMock(),
+        )
+
+        loop._execute_single_task = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentResult(content="RAW TRANSCRIPT", status="completed")
+        )
+        loop._handle_transform_action = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentResult(content="SHORT SUMMARY", status="completed")
+        )
+
+        result = await loop._execute_planned_tasks(
+            plan=[
+                {"action": "execute", "task": "Transcribe URL"},
+                {"action": "transform", "instruction": "Summarize in Russian"},
+            ],
+            history=None,
+            system_prompt="system",
+            link_context="",
+            on_event=None,
+            events=[],
+        )
+
+        assert result.status == "completed"
+        assert result.content == "SHORT SUMMARY"
+
+    @pytest.mark.asyncio
+    async def test_plan_rewrite_prefers_transcribe_for_youtube_summary(self, tmp_path: Path) -> None:
+        """Planner output for YouTube summaries is rewritten to explicit transcribe task."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        planned = [
+            {
+                "action": "execute",
+                "task": "Fetch video transcript or content from https://youtu.be/nIqdV91Sdmw",
+            },
+            {"action": "transform", "instruction": "Summarize the content in Russian"},
+        ]
+
+        mock_provider = AsyncMock()
+        mock_provider.acomplete = AsyncMock(return_value=LLMResponse(content=json.dumps(planned)))
+
+        mock_selector = MagicMock()
+        mock_selector._provider = mock_provider
+
+        loop = AgentLoop(
+            selector=mock_selector,
+            generator=AsyncMock(),
+            runtime=AsyncMock(),
+            analyzer=AsyncMock(),
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=MagicMock(),
+        )
+
+        plan = await loop._plan_tasks("Summarize in Russian https://youtu.be/nIqdV91Sdmw")
+
+        assert plan[0]["action"] == "execute"
+        assert "transcribe tool" in plan[0]["task"].lower()
+        assert "https://youtu.be/nIqdV91Sdmw" in plan[0]["task"]
+        assert plan[1]["action"] == "transform"
+
+    @pytest.mark.asyncio
+    async def test_plan_fallback_rewrite_prefers_transcribe(self, tmp_path: Path) -> None:
+        """Planner fallback still rewrites media transcript requests to transcribe task."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        mock_provider = AsyncMock()
+        mock_provider.acomplete = AsyncMock(side_effect=RuntimeError("planner failed"))
+
+        mock_selector = MagicMock()
+        mock_selector._provider = mock_provider
+
+        loop = AgentLoop(
+            selector=mock_selector,
+            generator=AsyncMock(),
+            runtime=AsyncMock(),
+            analyzer=AsyncMock(),
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=MagicMock(),
+        )
+
+        plan = await loop._plan_tasks("Please summarize https://youtu.be/nIqdV91Sdmw in Russian")
+
+        assert len(plan) == 1
+        assert plan[0]["action"] == "execute"
+        assert "transcribe tool" in plan[0]["task"].lower()
 
 
 # ---------------------------------------------------------------------------

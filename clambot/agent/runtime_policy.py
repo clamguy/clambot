@@ -46,6 +46,10 @@ def resolve_runtime_policy(
 
     # Apply config defaults first
     if config_defaults is not None:
+        timeout_seconds = getattr(config_defaults, "runtime_timeout_seconds", None)
+        if timeout_seconds is not None:
+            policy.timeout_seconds = int(timeout_seconds)
+
         max_iters = getattr(config_defaults, "max_tool_iterations", None)
         if max_iters is not None:
             policy.max_tool_iterations = max_iters

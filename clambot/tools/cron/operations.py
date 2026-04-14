@@ -90,6 +90,19 @@ class CronTool(BuiltinTool):
         return "Schedule recurring or one-time tasks."
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time cron usage."""
+        return [
+            "Use action 'add' to schedule, 'list' to inspect jobs, and 'remove' to delete jobs.",
+            (
+                "For add, provide exactly one scheduling field: every_seconds, cron_expr, or at_ms "
+                "(plus message)."
+            ),
+            "Use delete_after_run=true for one-shot reminders.",
+            "Check result.ok/result.message on add/remove; use result.jobs for list.",
+        ]
+
+    @property
     def returns(self) -> dict[str, Any]:
         """Return value schema for ``cron``."""
         return {

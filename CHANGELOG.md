@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.1.2] - 2026-04-13
+
+### Added
+
+- **Local Whisper ASR Support** — transcribe tool now supports local `whisper-asr-webservice` style endpoints via `whisperApiStyle: "whisper_asr"` (alongside OpenAI-compatible mode)
+- **Transcribe Timeout Controls** — `whisperRequestTimeoutSeconds` config added for per-chunk transcription HTTP timeout tuning
+- **Prompt-Pluggable Tool Guidance** — built-in tools can now expose `usage_instructions` metadata that is injected into the system prompt when those tools are enabled
+- **Default Runtime Timeout Config** — `agents.defaults.runtimeTimeoutSeconds` now controls clam execution timeout policy globally
+
+### Changed
+
+- **Planner Routing for Media** — YouTube/video/audio transcript tasks are explicitly rewritten to use `transcribe` in execute steps
+- **Direct Tool Execution Scope** — agent-loop direct execution is now limited to `cron` (no direct `web_fetch` execution path)
+- **Self-Fix Regeneration Prompt** — retries now explicitly require valid JavaScript + JSON shape and include rejected output context for correction
+
+### Fixed
+
+- **Large Transcript Bridge Failures** — sandbox runtime backend now emits large returned values in safe chunks, preventing `JSONDecodeError: Unterminated string` failures on long transcripts
+- **Subtask Context Leakage** — planned execute subtasks no longer inherit top-level pre-fetched link context that could cause prose/refusal outputs instead of runnable code
+- **Transcription Resilience** — transcribe client now retries on timeout/transport errors and transient HTTP statuses (408/429/5xx), improving long local ASR runs
+- **Execute→Transform Output Composition** — planned flows that transform fetched content now return only the transformed result (not raw transcript + summary), preventing oversized first replies in Telegram
+
 ## [0.1.1] - 2026-03-31
 
 ### Added
@@ -55,5 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Code Quality** — Ruff linting/formatting, mypy type checking, pre-commit hooks, protocol-based type safety, dependency version bounds
 - **Host-Managed Secrets** — atomic-write secret store with 0600 permissions, multi-source resolution (explicit, env, dotenv, getpass, gateway prompt), and bearer token injection
 
+[0.1.2]: https://github.com/clamguy/clambot/releases/tag/v0.1.2
 [0.1.1]: https://github.com/clamguy/clambot/releases/tag/v0.1.1
 [0.1.0]: https://github.com/clamguy/clambot/releases/tag/v0.1.0
+[Unreleased]: https://github.com/clamguy/clambot/compare/v0.1.2...HEAD

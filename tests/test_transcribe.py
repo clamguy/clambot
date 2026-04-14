@@ -304,6 +304,131 @@ class TestTranscribeFiles:
         assert call_kwargs[1]["data"]["language"] == "es"
         assert result == "Hola mundo"
 
+    def test_transcribe_whisper_asr_local_endpoint(self, tmp_path: Path) -> None:
+        """Local whisper-asr endpoint uses /asr request semantics."""
+        audio = tmp_path / "clip.mp3"
+        audio.write_bytes(b"audio data")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"text": "Local transcript"}
+        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+
+        with patch("clambot.tools.transcribe.whisper.httpx.Client") as MockClient:
+            mock_client = MagicMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            MockClient.return_value = mock_client
+
+            result = transcribe_files(
+                [audio],
+                api_key="",
+                api_url="http://localhost:9000/asr",
+                api_style="whisper_asr",
+                language="en",
+            )
+
+        MockClient.assert_called_once_with(timeout=600.0)
+        call_kwargs = mock_client.post.call_args
+        assert call_kwargs[0][0] == "http://localhost:9000/asr"
+        assert "headers" not in call_kwargs[1]
+        assert call_kwargs[1]["params"]["task"] == "transcribe"
+        assert call_kwargs[1]["params"]["output"] == "json"
+        assert call_kwargs[1]["params"]["language"] == "en"
+        assert "audio_file" in call_kwargs[1]["files"]
+        assert result == "Local transcript"
+
+    def test_transcribe_whisper_asr_plain_text_fallback(self, tmp_path: Path) -> None:
+        """Non-JSON local response falls back to response text."""
+        audio = tmp_path / "clip.mp3"
+        audio.write_bytes(b"audio data")
+
+        mock_response = MagicMock()
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "Raw transcript"
+
+        with patch("clambot.tools.transcribe.whisper.httpx.Client") as MockClient:
+            mock_client = MagicMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            MockClient.return_value = mock_client
+
+            result = transcribe_files(
+                [audio],
+                api_key="",
+                api_url="http://localhost:9000/asr",
+                api_style="whisper_asr",
+            )
+
+        assert result == "Raw transcript"
+
+    def test_transcribe_whisper_asr_retries_timeout(self, tmp_path: Path) -> None:
+        """Local ASR retries transient read timeout and then succeeds."""
+        audio = tmp_path / "clip.mp3"
+        audio.write_bytes(b"audio data")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"text": "Recovered transcript"}
+        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+
+        timeout_exc = httpx.ReadTimeout("timed out", request=MagicMock())
+
+        with (
+            patch("clambot.tools.transcribe.whisper._INITIAL_BACKOFF", 0.0),
+            patch("clambot.tools.transcribe.whisper.httpx.Client") as MockClient,
+        ):
+            mock_client = MagicMock()
+            mock_client.post.side_effect = [timeout_exc, mock_response]
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            MockClient.return_value = mock_client
+
+            result = transcribe_files(
+                [audio],
+                api_key="",
+                api_url="http://localhost:9000/asr",
+                api_style="whisper_asr",
+            )
+
+        assert mock_client.post.call_count == 2
+        assert result == "Recovered transcript"
+
+    def test_transcribe_whisper_asr_custom_timeout(self, tmp_path: Path) -> None:
+        """Custom request timeout is used when provided."""
+        audio = tmp_path / "clip.mp3"
+        audio.write_bytes(b"audio data")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"text": "Custom timeout transcript"}
+        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = ""
+
+        with patch("clambot.tools.transcribe.whisper.httpx.Client") as MockClient:
+            mock_client = MagicMock()
+            mock_client.post.return_value = mock_response
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            MockClient.return_value = mock_client
+
+            result = transcribe_files(
+                [audio],
+                api_key="",
+                api_url="http://localhost:9000/asr",
+                api_style="whisper_asr",
+                request_timeout=240.0,
+            )
+
+        MockClient.assert_called_once_with(timeout=240.0)
+        assert result == "Custom timeout transcript"
+
 
 # ---------------------------------------------------------------------------
 # Phase 3: TranscribeTool tests
@@ -352,6 +477,46 @@ class TestTranscribeTool:
             result = tool.execute({"url": "https://youtube.com/watch?v=test"})
         assert "error" in result
         assert result["error"] == "Secret 'GROQ_API_KEY' not found"
+
+    def test_transcribe_execute_whisper_asr_without_api_key(self, tmp_path: Path) -> None:
+        """Local whisper-asr style can run without GROQ_API_KEY."""
+        config = TranscribeToolConfig(
+            whisper_api_style="whisper_asr",
+            whisper_api_url="http://localhost:9000/asr",
+            whisper_request_timeout_seconds=900.0,
+        )
+        tool = TranscribeTool(config=config)
+
+        mock_audio_info = AudioInfo(
+            path=tmp_path / "test.mp3",
+            title="Local Whisper Test",
+            duration=60.0,
+            filesize=1000,
+        )
+
+        env = {k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch(
+                "clambot.tools.transcribe.transcribe.download_audio",
+                return_value=mock_audio_info,
+            ),
+            patch(
+                "clambot.tools.transcribe.transcribe.chunk_if_needed",
+                return_value=[tmp_path / "test.mp3"],
+            ),
+            patch(
+                "clambot.tools.transcribe.transcribe.transcribe_files",
+                return_value="Local whisper transcript",
+            ) as mock_transcribe,
+        ):
+            result = tool.execute({"url": "https://youtube.com/watch?v=test"})
+
+        assert "error" not in result
+        assert result["transcript"] == "Local whisper transcript"
+        assert mock_transcribe.call_args[0][1] == ""
+        assert mock_transcribe.call_args[1]["api_style"] == "whisper_asr"
+        assert mock_transcribe.call_args[1]["request_timeout"] == 900.0
 
     def test_transcribe_execute_api_key_from_secret_store(self, tmp_path: Path) -> None:
         """API key resolved from SecretStore takes priority over env var."""

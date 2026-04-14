@@ -102,6 +102,16 @@ class PdfReaderTool(BuiltinTool):
         )
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time pdf_reader usage."""
+        return [
+            "Use for PDF files (for uploaded files typically under upload/<name>.pdf).",
+            "Pass path and optional pages (for example: '1-3' or '1,3,5').",
+            "Check result.error before reading result.text.",
+            "Return result.text for downstream summarize/translate steps.",
+        ]
+
+    @property
     def schema(self) -> dict[str, Any]:
         return {
             "type": "object",

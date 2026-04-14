@@ -69,7 +69,14 @@ class ProviderBackedClamGenerator:
         if link_context:
             user_content += f"\n\n--- LINK CONTEXT ---\n{link_context}"
         if self_fix_context:
-            user_content = f"SELF_FIX_RUNTIME:\n{self_fix_context}\n\nOriginal request: {message}"
+            user_content = (
+                "SELF_FIX_RUNTIME:\n"
+                f"{self_fix_context}\n\n"
+                f"Original request: {message}\n\n"
+                "Regenerate the clam as VALID JAVASCRIPT CODE. "
+                "Return ONLY a JSON object with keys: script, declared_tools, inputs, metadata. "
+                "Do NOT return prose, summaries, or a direct user-facing answer."
+            )
 
         messages.append({"role": "user", "content": user_content})
 

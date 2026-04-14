@@ -15,6 +15,8 @@ from clambot.tools.http.core import HttpRequestTool
 from clambot.tools.memory.recall import MemoryRecallTool
 from clambot.tools.memory.search import MemorySearchHistoryTool
 from clambot.tools.registry import BuiltinToolRegistry
+from clambot.tools.transcribe.transcribe import TranscribeTool
+from clambot.tools.web.fetch import WebFetchTool
 from clambot.tools.secrets.env import resolve_secret_value
 from clambot.tools.secrets.store import SecretRecord, SecretStore
 
@@ -116,6 +118,53 @@ class TestBuiltinToolRegistry:
         registry.register(EchoTool())
         registry.register(CronTool())
         assert registry.tool_names == ["echo", "cron"]
+
+    def test_get_usage_instructions_includes_tool_metadata(self) -> None:
+        """Registry exposes prompt usage instructions from registered tools."""
+        registry = BuiltinToolRegistry()
+        registry.register(WebFetchTool())
+        registry.register(HttpRequestTool())
+        registry.register(TranscribeTool())
+
+        usage = registry.get_usage_instructions()
+
+        assert "web_fetch" in usage
+        assert any("content" in item for item in usage["web_fetch"])
+        assert "http_request" in usage
+        assert any("method" in item for item in usage["http_request"])
+        assert "transcribe" in usage
+        assert any("transcript" in item for item in usage["transcribe"])
+
+    def test_build_tool_registry_usage_instructions_cover_enabled_tools(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Default registry exposes instructions for all enabled built-in tools."""
+        from clambot.tools import build_tool_registry
+
+        ws = _make_workspace(tmp_path)
+        ss = SecretStore(tmp_path / "secrets.json")
+        registry = build_tool_registry(workspace=ws, secret_store=ss)
+
+        usage = registry.get_usage_instructions()
+
+        expected = {
+            "fs",
+            "http_request",
+            "web_fetch",
+            "cron",
+            "secrets_add",
+            "memory_recall",
+            "memory_search_history",
+            "pdf_reader",
+            "transcribe",
+        }
+        assert expected.issubset(set(usage))
+        assert any("one-shot" in item for item in usage["cron"])
+        assert any("MEMORY.md" in item for item in usage["memory_recall"])
+        assert any("query" in item for item in usage["memory_search_history"])
+        assert any("upload/<name>.pdf" in item for item in usage["pdf_reader"])
+        assert any("from_env" in item for item in usage["secrets_add"])
 
 
 # ---------------------------------------------------------------------------
@@ -1024,3 +1073,6 @@ class TestBuiltinToolsIntegration:
         assert cfg.chunk_duration_seconds == 600
         assert cfg.audio_format == "mp3"
         assert cfg.whisper_model == "whisper-large-v3"
+        assert cfg.whisper_api_url == "https://api.groq.com/openai/v1/audio/transcriptions"
+        assert cfg.whisper_api_style == "openai"
+        assert cfg.whisper_request_timeout_seconds == 600.0

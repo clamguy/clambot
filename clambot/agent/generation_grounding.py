@@ -122,7 +122,7 @@ def apply_grounding_rules(result: GenerationResult) -> GenerationResult:
         result.error = (
             "Rejected: script is not valid JavaScript. "
             "Generate an async function run(args) that uses the available "
-            "tools (web_fetch, http_request, etc.) to fulfill the request."
+            "tools (web_fetch, http_request, transcribe, etc.) to fulfill the request."
         )
 
     result.script = script

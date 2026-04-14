@@ -64,6 +64,16 @@ class FilesystemTool(BuiltinTool):
         )
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time fs usage."""
+        return [
+            "Use operation + path arguments (for example: list/read/write/edit/disk_usage).",
+            "Use relative paths for workspace files; avoid the /workspace/ prefix.",
+            "For write/edit, pass content/old_text/new_text explicitly in args.",
+            "Return the tool result string directly so the user sees file output/errors.",
+        ]
+
+    @property
     def returns(self) -> dict[str, Any]:
         """Return value schema for ``fs``."""
         return {

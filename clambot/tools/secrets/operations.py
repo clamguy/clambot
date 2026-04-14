@@ -48,6 +48,16 @@ class SecretsAddTool(BuiltinTool):
         )
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time secrets_add usage."""
+        return [
+            "Use to persist/update a secret before tools that require credentials.",
+            "Pass name and either value or from_env (environment variable name).",
+            "Optional description helps users manage stored secrets.",
+            "Check result.ok/result.error and never echo secret values back to the user.",
+        ]
+
+    @property
     def returns(self) -> dict[str, Any]:
         """Return value schema for ``secrets_add``."""
         return {

@@ -105,6 +105,23 @@ class BuiltinToolRegistry:
         """
         return self._tools.get(name)
 
+    def get_usage_instructions(self) -> dict[str, list[str]]:
+        """Return prompt usage instructions for registered tools.
+
+        Returns:
+            Mapping ``{tool_name: [instruction, ...]}`` for tools that define
+            non-empty :attr:`~clambot.tools.base.BuiltinTool.usage_instructions`.
+        """
+        instructions: dict[str, list[str]] = {}
+        for tool in self._tools.values():
+            raw = tool.usage_instructions
+            if not raw:
+                continue
+            clean = [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+            if clean:
+                instructions[tool.name] = clean
+        return instructions
+
     @property
     def tool_names(self) -> list[str]:
         """Return the names of all registered tools in insertion order."""

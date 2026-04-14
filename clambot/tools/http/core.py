@@ -84,6 +84,19 @@ class HttpRequestTool(BuiltinTool):
         return "Make HTTP requests with optional bearer_secret authentication."
 
     @property
+    def usage_instructions(self) -> list[str]:
+        """Prompt guidance for generation-time http_request usage."""
+        return [
+            "Use for API/endpoint calls where HTTP method and status control matter.",
+            "Always set method and url; read result.content for the response body.",
+            "Check result.ok/result.status_code and handle result.error on failures.",
+            (
+                "For bearer secrets, pass auth: {type: \"bearer_secret\", name: \"SECRET_NAME\"} "
+                "and do not set Authorization header manually."
+            ),
+        ]
+
+    @property
     def returns(self) -> dict[str, Any]:
         """Return value schema for ``http_request``."""
         return {

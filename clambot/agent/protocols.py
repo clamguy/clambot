@@ -94,6 +94,10 @@ class ToolRegistryProtocol(Protocol):
         """Look up a tool by name, or return ``None``."""
         ...
 
+    def get_usage_instructions(self) -> dict[str, list[str]]:
+        """Return per-tool prompt usage instructions keyed by tool name."""
+        ...
+
     def dispatch(self, tool_name: str, args: dict[str, Any]) -> Any:
         """Execute a tool call and return its result."""
         ...

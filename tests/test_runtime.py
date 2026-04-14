@@ -339,16 +339,20 @@ class TestRuntimePolicy:
     def test_resolve_with_config_defaults(self):
         """Config defaults are applied when metadata doesn't override."""
         config = MagicMock()
+        config.runtime_timeout_seconds = 180
         config.max_tool_iterations = 30
         policy = resolve_runtime_policy(None, config)
+        assert policy.timeout_seconds == 180
         assert policy.max_tool_iterations == 30
 
     def test_metadata_overrides_config(self):
         """Metadata takes priority over config defaults."""
         config = MagicMock()
+        config.runtime_timeout_seconds = 180
         config.max_tool_iterations = 30
-        metadata = {"runtime": {"max_tool_iterations": 5}}
+        metadata = {"runtime": {"timeout_seconds": 25, "max_tool_iterations": 5}}
         policy = resolve_runtime_policy(metadata, config)
+        assert policy.timeout_seconds == 25
         assert policy.max_tool_iterations == 5
 
     def test_empty_metadata(self):
@@ -472,6 +476,41 @@ class TestAmlaSandboxRuntimeBackend:
         backend = AmlaSandboxRuntimeBackend()
         result = backend.execute("return 42;")
         assert "events" in result.run_log or "event_count" in result.run_log
+
+    def test_large_return_string_is_chunked_without_bridge_json_error(self):
+        """Large return strings do not trigger bridge JSON truncation errors."""
+        large_text = "x" * 12_000
+
+        def handler(method, params):
+            assert method == "transcribe"
+            return {"transcript": large_text}
+
+        backend = AmlaSandboxRuntimeBackend(tool_handler=handler)
+        tool_schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "transcribe",
+                    "description": "Transcribe media",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"url": {"type": "string"}},
+                        "required": ["url"],
+                    },
+                },
+            }
+        ]
+
+        result = backend.execute(
+            "async function run(args) { const r = await transcribe({url: args.url}); return r.transcript; }",
+            declared_tools=tool_schemas,
+            inputs={"url": "https://example.com/video"},
+        )
+
+        assert result.error == ""
+        # Chunked emission uses console.log per chunk, so output includes
+        # chunk separator newlines; remove them to verify content integrity.
+        assert result.output.replace("\n", "") == large_text
 
 
 # ═══════════════════════════════════════════════════════════════════════

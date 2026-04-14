@@ -6,6 +6,8 @@ expose snake_case Python attributes.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -26,6 +28,7 @@ class AgentDefaults(Base):
     model: str = ""
     max_tokens: int = 8192
     temperature: float = 0.7
+    runtime_timeout_seconds: int = 60
     max_tool_iterations: int = 20
     max_self_fix_attempts: int = 3
 
@@ -136,7 +139,10 @@ class TranscribeToolConfig(Base):
     tool.
 
     ``whisper_api_url`` defaults to the Groq Whisper endpoint but can be
-    overridden to point at any OpenAI-compatible transcription API.
+    overridden to point at custom endpoints. ``whisper_api_style`` controls
+    request/response shape compatibility (OpenAI-style vs local Whisper ASR
+    service). ``whisper_request_timeout_seconds`` controls per-chunk HTTP
+    timeout and should typically be higher for local CPU-based ASR.
     """
 
     max_duration_seconds: int = 7200
@@ -144,6 +150,8 @@ class TranscribeToolConfig(Base):
     audio_format: str = "mp3"
     whisper_model: str = "whisper-large-v3"
     whisper_api_url: str = "https://api.groq.com/openai/v1/audio/transcriptions"
+    whisper_api_style: Literal["openai", "whisper_asr"] = "openai"
+    whisper_request_timeout_seconds: float = 600.0
 
 
 # ---------------------------------------------------------------------------

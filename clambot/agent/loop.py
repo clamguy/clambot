@@ -59,6 +59,9 @@ Rules:
   "transform" with an "instruction" field. The clam MUST NOT attempt \
   translation, summarization, or text analysis — that is the transform \
   step's job.
+- For YouTube/video/audio transcript requests, the "execute" task MUST \
+  explicitly use the `transcribe` tool on the media URL. Do NOT use \
+  `web_fetch` for speech transcript extraction.
 - Simple reminders (no data needed) → single "schedule" action. Do NOT \
   add a separate confirmation step.
 - Data-fetch + scheduling → "execute" first, then "schedule" referencing \
@@ -75,6 +78,7 @@ Return ONLY a JSON array — no markdown, no explanation.
 
 Examples:
 "What's the weather?" → [{"action":"execute","task":"What's the weather?"}]
+"Summarize this YouTube video https://youtu.be/abc" → [{"action":"execute","task":"Transcribe audio from https://youtu.be/abc using transcribe tool and return transcript"},{"action":"transform","instruction":"Summarize in Russian"}]
 "Fetch example.com and translate to Russian" → [{"action":"execute","task":"Fetch page https://example.com/"},{"action":"transform","instruction":"Translate the content to Russian"}]
 "Summarize this article: https://..." → [{"action":"execute","task":"Fetch page https://..."},{"action":"transform","instruction":"Summarize the article"}]
 "Remind me to read a book in 5 min" → [{"action":"schedule","message":"Reminder: read a book","at_minutes_from_now":5,"delete_after_run":true}]
@@ -90,6 +94,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SECRET_NOT_FOUND_RE = re.compile(r"Secret '([^']+)' not found")
+_URL_RE = re.compile(r"https?://[^\s)\]\}]+", re.IGNORECASE)
+_MEDIA_HOST_RE = re.compile(
+    r"(?:youtube\.com|youtu\.be|vimeo\.com|rutube\.ru|tiktok\.com|soundcloud\.com)",
+    re.IGNORECASE,
+)
+_TRANSCRIBE_OR_SUMMARY_RE = re.compile(
+    (
+        r"(transcrib|transcript|subtitle|caption|speech[ -]?to[ -]?text|"
+        r"summari[sz]e|summary|кратк|резюм|обобщ|перескаж|содержание)"
+    ),
+    re.IGNORECASE,
+)
 
 
 def _detect_missing_secrets(runtime_result: Any) -> list[str]:
@@ -137,6 +153,58 @@ def _detect_missing_secrets(runtime_result: Any) -> list[str]:
             missing.append(name)
 
     return missing
+
+
+def _extract_first_url(text: str) -> str | None:
+    """Extract the first URL from user text, if present."""
+    match = _URL_RE.search(text or "")
+    return match.group(0) if match else None
+
+
+def _should_force_transcribe_plan(message: str) -> bool:
+    """Return True when media transcript requests should prefer ``transcribe``."""
+    if not _TRANSCRIBE_OR_SUMMARY_RE.search(message or ""):
+        return False
+
+    url = _extract_first_url(message)
+    if not url:
+        return False
+
+    return bool(_MEDIA_HOST_RE.search(url))
+
+
+def _rewrite_plan_for_transcribe(message: str, plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rewrite execute step to explicitly use transcribe for media URLs."""
+    if not _should_force_transcribe_plan(message):
+        return plan
+
+    url = _extract_first_url(message)
+    if not url:
+        return plan
+
+    transcribe_task = (
+        f"Transcribe audio from {url} using the transcribe tool and return transcript text."
+    )
+
+    rewritten: list[dict[str, Any]] = []
+    replaced = False
+    for step in plan:
+        action = step.get("action", "execute") if isinstance(step, dict) else "execute"
+        if not replaced and action == "execute" and isinstance(step, dict):
+            new_step = dict(step)
+            new_step["task"] = transcribe_task
+            rewritten.append(new_step)
+            replaced = True
+            continue
+        if isinstance(step, dict):
+            rewritten.append(step)
+
+    if not rewritten:
+        rewritten = [{"action": "execute", "task": transcribe_task}]
+    elif not replaced:
+        rewritten.insert(0, {"action": "execute", "task": transcribe_task})
+
+    return rewritten
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +284,18 @@ class AgentLoop:
         """Inject the cron service for direct scheduling by the agent."""
         self._cron_service = cron_service
 
+    def _get_tool_usage_instructions(self) -> dict[str, list[str]]:
+        """Return per-tool prompt usage notes from the registry, if available."""
+        if not self._tool_registry or not hasattr(self._tool_registry, "get_usage_instructions"):
+            return {}
+
+        try:
+            data = self._tool_registry.get_usage_instructions()
+        except Exception:
+            return {}
+
+        return data if isinstance(data, dict) else {}
+
     async def process_turn(
         self,
         message: str,
@@ -269,11 +349,13 @@ class AgentLoop:
         docs = self._context_builder.load_workspace_docs()
         clam_catalog = self._clam_registry.get_catalog()
         tool_schemas = self._tool_registry.get_schemas() if self._tool_registry else []
+        tool_usage_instructions = self._get_tool_usage_instructions()
 
         system_prompt = self._context_builder.build_system_prompt(
             docs=docs,
             memory=memory,
             tools=tool_schemas,
+            tool_usage_instructions=tool_usage_instructions,
             clam_catalog=clam_catalog,
             link_context=link_context,
         )
@@ -323,10 +405,10 @@ class AgentLoop:
                     elif isinstance(item, dict) and "action" in item:
                         normalised.append(item)
                 if normalised:
-                    return normalised
+                    return _rewrite_plan_for_transcribe(message, normalised)
         except Exception as exc:
             logger.debug("Task planning failed, using single task: %s", exc)
-        return fallback
+        return _rewrite_plan_for_transcribe(message, fallback)
 
     # ------------------------------------------------------------------
     # Multi-step execution
@@ -364,11 +446,17 @@ class AgentLoop:
                 for key, value in context.items():
                     task_msg = task_msg.replace(f"{{{key}}}", value)
 
+                # Do not pass top-level pre-fetched link context into execute
+                # subtasks. It can cause the generator to answer directly from
+                # context text instead of producing runnable JavaScript.
+                # Execute subtasks should fetch/compute via tools.
+                subtask_link_context = ""
+
                 result = await self._execute_single_task(
                     message=task_msg,
                     history=history,
                     system_prompt=system_prompt,
-                    link_context=link_context,
+                    link_context=subtask_link_context,
                     on_event=on_event,
                     events=events,
                     _is_subtask=True,
@@ -382,11 +470,15 @@ class AgentLoop:
 
             results.append(result)
 
-        # Combine outputs
+        # Combine outputs. For execute→transform flows, return the transformed
+        # result only (not raw source text + transformed text), otherwise
+        # users receive large intermediate payloads like full transcripts.
+        has_transform = any(step.get("action") == "transform" for step in plan)
         combined = "\n\n".join(r.content for r in results if r.content)
         last = results[-1] if results else AgentResult(status="failed")
+        final_content = (last.content or "") if has_transform else combined
         return AgentResult(
-            content=combined,
+            content=final_content,
             status=last.status,
             selection_reason=last.selection_reason,
             clam_name=last.clam_name,
@@ -508,10 +600,10 @@ class AgentLoop:
         )
 
     # ------------------------------------------------------------------
-    # Direct tool execution (agent-level tools: cron, web_fetch)
+    # Direct tool execution (agent-level tools: cron)
     # ------------------------------------------------------------------
 
-    _DIRECT_TOOLS: frozenset[str] = frozenset({"cron", "web_fetch"})
+    _DIRECT_TOOLS: frozenset[str] = frozenset({"cron"})
 
     async def _execute_direct_tool_from_script(
         self,
@@ -624,6 +716,7 @@ class AgentLoop:
                     docs=self._context_builder.load_workspace_docs(),
                     memory=memory_recall(self._workspace),
                     tools=all_tool_schemas,
+                    tool_usage_instructions=self._get_tool_usage_instructions(),
                     clam_catalog=clam_catalog,
                     link_context=link_context,
                     generation_mode=False,
@@ -774,6 +867,9 @@ class AgentLoop:
         # Grounding rejected the script (refusal, non-code, etc.) — retry
         if gen_result.error:
             if attempt < self._max_self_fix:
+                bad_output = (gen_result.script or "").strip()
+                if len(bad_output) > 2000:
+                    bad_output = bad_output[:2000]
                 return await self._generate_and_execute(
                     message=message,
                     history=history,
@@ -782,7 +878,10 @@ class AgentLoop:
                     selection=selection,
                     on_event=on_event,
                     events=events,
-                    self_fix_context=f"GROUNDING ERROR: {gen_result.error}",
+                    self_fix_context=(
+                        f"GROUNDING ERROR: {gen_result.error}\n\n"
+                        f"BAD OUTPUT (must be replaced with code):\n{bad_output}"
+                    ),
                     attempt=attempt + 1,
                 )
             logger.warning(
