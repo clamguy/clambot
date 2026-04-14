@@ -12,7 +12,7 @@
 ✨ Inspired by [OpenClaw](https://github.com/openclaw/openclaw) and [nanobot](https://github.com/HKUDS/nanobot).
 
 > [!IMPORTANT]
-> ClamBot is tested primarily with **OpenAI Codex** and this is the recommended provider for the best out-of-the-box reliability.
+> ClamBot is tested primarily with **OpenAI Codex** on **Linux** and this is the recommended provider for the best out-of-the-box reliability.
 
 🔒 Every other agent framework runs LLM-generated code directly on your machine. ClamBot isolates it:
 
