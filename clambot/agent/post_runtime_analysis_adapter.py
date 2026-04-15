@@ -42,6 +42,9 @@ def normalize_analysis_response(raw: str) -> AnalysisResult:
 
     data = _try_parse_json(text)
     if data is None:
+        partial = _try_parse_partial_json(text)
+        if partial is not None:
+            return partial
         return _fallback_parse(raw)
 
     decision_str = data.get("decision", "REJECT").upper()
@@ -56,6 +59,83 @@ def normalize_analysis_response(raw: str) -> AnalysisResult:
         fix_instructions=data.get("fix_instructions", ""),
         reason=data.get("reason", ""),
     )
+
+
+def _try_parse_partial_json(text: str) -> AnalysisResult | None:
+    """Best-effort parse for truncated/malformed JSON analyzer outputs.
+
+    Some model responses are visibly JSON-shaped but truncated (for example,
+    long ACCEPT outputs cut by token limits). In this case, extract whichever
+    string fields are still complete so we don't leak raw JSON back to users.
+    """
+    stripped = text.strip()
+    start = stripped.find("{")
+    if start < 0:
+        return None
+
+    candidate = stripped[start:]
+    if '"decision"' not in candidate:
+        return None
+
+    decision_str = _extract_json_string_field(candidate, "decision")
+    if not decision_str:
+        return None
+
+    try:
+        decision = PostRuntimeAnalysisDecision(decision_str.upper())
+    except ValueError:
+        decision = PostRuntimeAnalysisDecision.REJECT
+
+    output = _extract_json_string_field(candidate, "output") or ""
+    fix_instructions = _extract_json_string_field(candidate, "fix_instructions") or ""
+    reason = _extract_json_string_field(candidate, "reason") or ""
+
+    return AnalysisResult(
+        decision=decision,
+        output=output,
+        fix_instructions=fix_instructions,
+        reason=reason or "Parsed from partial JSON response",
+    )
+
+
+def _extract_json_string_field(text: str, field: str) -> str | None:
+    """Extract and decode a JSON string field from possibly malformed JSON."""
+    match = re.search(rf'"{re.escape(field)}"\s*:\s*"', text)
+    if not match:
+        return None
+
+    i = match.end()
+    escaped = False
+    buf: list[str] = []
+
+    while i < len(text):
+        ch = text[i]
+
+        if escaped:
+            buf.append(ch)
+            escaped = False
+            i += 1
+            continue
+
+        if ch == "\\":
+            buf.append(ch)
+            escaped = True
+            i += 1
+            continue
+
+        if ch == '"':
+            raw_value = "".join(buf)
+            try:
+                decoded = json.loads(f'"{raw_value}"')
+            except (json.JSONDecodeError, ValueError):
+                return raw_value
+            return decoded if isinstance(decoded, str) else str(decoded)
+
+        buf.append(ch)
+        i += 1
+
+    # Unterminated string in truncated JSON.
+    return None
 
 
 def _try_parse_json(text: str) -> dict | None:

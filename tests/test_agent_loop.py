@@ -24,7 +24,7 @@ import pytest
 
 from clambot.agent.analysis_trace import AnalysisTraceBuilder
 from clambot.agent.chat_mode import ChatModeFallbackResponder
-from clambot.agent.clams import ClamRegistry, ClamSummary, parse_clam_md
+from clambot.agent.clams import Clam, ClamRegistry, ClamSummary, parse_clam_md
 from clambot.agent.context import ContextBuilder
 from clambot.agent.final_response import select_final_response
 from clambot.agent.generation_adapter import (
@@ -560,6 +560,28 @@ class TestAnalysisAdapter:
         assert result.decision == PostRuntimeAnalysisDecision.ACCEPT
         assert result.output == "The result"
 
+    def test_partial_json_accept_is_parsed_without_leaking_raw_json(self) -> None:
+        """Malformed JSON object still extracts decision/output when complete."""
+        raw = '{"decision":"ACCEPT","output":"Transcript text","reason":"ok"'
+        result = normalize_analysis_response(raw)
+        assert result.decision == PostRuntimeAnalysisDecision.ACCEPT
+        assert result.output == "Transcript text"
+        assert result.reason == "ok"
+
+    def test_truncated_partial_json_accept_keeps_output_empty(self) -> None:
+        """Truncated output string should not return raw JSON to users."""
+        raw = '{"decision":"ACCEPT","output":"Transcript text that got truncated'
+        result = normalize_analysis_response(raw)
+        assert result.decision == PostRuntimeAnalysisDecision.ACCEPT
+        assert result.output == ""
+
+    def test_partial_json_accept_with_prose_prefix_is_parsed(self) -> None:
+        """Best-effort parsing handles malformed JSON after explanatory prose."""
+        raw = 'Analyzer response:\n{"decision":"ACCEPT","output":"Transcript text"'
+        result = normalize_analysis_response(raw)
+        assert result.decision == PostRuntimeAnalysisDecision.ACCEPT
+        assert result.output == "Transcript text"
+
 
 # ---------------------------------------------------------------------------
 # Final response tests
@@ -991,6 +1013,126 @@ class TestTaskPlanningExecution:
 
         assert result.status == "completed"
         assert result.content == "SHORT SUMMARY"
+
+    @pytest.mark.asyncio
+    async def test_pure_transcribe_bypasses_analysis_and_keeps_full_output(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Pure transcript requests should return runtime output verbatim."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        runtime_output = "FULL TRANSCRIPT CONTENT"
+        mock_runtime = AsyncMock()
+        mock_runtime.execute = AsyncMock(
+            return_value=MagicMock(output=runtime_output, error="", stderr="", timed_out=False)
+        )
+
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze = AsyncMock(
+            return_value=AnalysisResult(
+                decision=PostRuntimeAnalysisDecision.ACCEPT,
+                output="summarized output",
+            )
+        )
+
+        loop = AgentLoop(
+            selector=AsyncMock(),
+            generator=AsyncMock(),
+            runtime=mock_runtime,
+            analyzer=mock_analyzer,
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=MagicMock(),
+        )
+
+        clam = Clam(
+            name="transcribe-clam",
+            script="async function run() {}",
+            declared_tools=["transcribe"],
+            inputs={"url": "https://youtu.be/nIqdV91Sdmw"},
+            metadata={},
+            language="javascript",
+        )
+
+        result = await loop._execute_and_analyze(
+            message="transcribe https://youtu.be/nIqdV91Sdmw",
+            clam=clam,
+            history=None,
+            system_prompt="",
+            link_context="",
+            selection=SelectionResult(decision="select_existing", reason="reuse"),
+            on_event=None,
+            events=[],
+        )
+
+        assert result.status == "completed"
+        assert result.content == runtime_output
+        assert mock_analyzer.analyze.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_transcribe_summarize_forces_full_output_analysis(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Transcript+transform requests should analyze untruncated output."""
+        (tmp_path / "clams").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+
+        mock_runtime = AsyncMock()
+        mock_runtime.execute = AsyncMock(
+            return_value=MagicMock(output="long transcript", error="", stderr="", timed_out=False)
+        )
+
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze = AsyncMock(
+            return_value=AnalysisResult(
+                decision=PostRuntimeAnalysisDecision.ACCEPT,
+                output="SHORT SUMMARY",
+            )
+        )
+
+        loop = AgentLoop(
+            selector=AsyncMock(),
+            generator=AsyncMock(),
+            runtime=mock_runtime,
+            analyzer=mock_analyzer,
+            tool_registry=None,
+            context_builder=ContextBuilder(workspace=tmp_path),
+            clam_registry=ClamRegistry(tmp_path),
+            memory_workspace=tmp_path,
+            config=MagicMock(),
+        )
+
+        clam = Clam(
+            name="transcribe-clam",
+            script="async function run() {}",
+            declared_tools=["transcribe"],
+            inputs={"url": "https://youtu.be/nIqdV91Sdmw"},
+            metadata={},
+            language="javascript",
+        )
+
+        result = await loop._execute_and_analyze(
+            message="summarize this video https://youtu.be/nIqdV91Sdmw",
+            clam=clam,
+            history=None,
+            system_prompt="",
+            link_context="",
+            selection=SelectionResult(decision="select_existing", reason="reuse"),
+            on_event=None,
+            events=[],
+        )
+
+        assert result.status == "completed"
+        assert result.content == "SHORT SUMMARY"
+        assert mock_analyzer.analyze.await_count == 1
+        assert mock_analyzer.analyze.await_args.kwargs["full_output"] is True
 
     @pytest.mark.asyncio
     async def test_plan_rewrite_prefers_transcribe_for_youtube_summary(self, tmp_path: Path) -> None:

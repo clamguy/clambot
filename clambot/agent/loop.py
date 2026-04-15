@@ -99,10 +99,14 @@ _MEDIA_HOST_RE = re.compile(
     r"(?:youtube\.com|youtu\.be|vimeo\.com|rutube\.ru|tiktok\.com|soundcloud\.com)",
     re.IGNORECASE,
 )
-_TRANSCRIBE_OR_SUMMARY_RE = re.compile(
+_TRANSCRIBE_INTENT_RE = re.compile(
+    r"(transcrib|transcript|subtitle|caption|speech[ -]?to[ -]?text|транскриб|стенограмм)",
+    re.IGNORECASE,
+)
+_TRANSFORM_INTENT_RE = re.compile(
     (
-        r"(transcrib|transcript|subtitle|caption|speech[ -]?to[ -]?text|"
-        r"summari[sz]e|summary|кратк|резюм|обобщ|перескаж|содержание)"
+        r"(summari[sz]e|summary|translate|translation|rewrite|reformat|"
+        r"analy[sz]e|analysis|кратк|резюм|обобщ|перескаж|содержание|перевод|проанализ)"
     ),
     re.IGNORECASE,
 )
@@ -161,16 +165,58 @@ def _extract_first_url(text: str) -> str | None:
     return match.group(0) if match else None
 
 
-def _should_force_transcribe_plan(message: str) -> bool:
-    """Return True when media transcript requests should prefer ``transcribe``."""
-    if not _TRANSCRIBE_OR_SUMMARY_RE.search(message or ""):
-        return False
-
+def _has_media_url(message: str) -> bool:
+    """Whether *message* includes a supported media host URL."""
     url = _extract_first_url(message)
     if not url:
         return False
-
     return bool(_MEDIA_HOST_RE.search(url))
+
+
+def _has_transcribe_intent(message: str) -> bool:
+    """Whether user text asks for transcript-style output."""
+    return bool(_TRANSCRIBE_INTENT_RE.search(message or ""))
+
+
+def _has_transform_intent(message: str) -> bool:
+    """Whether user text asks for transformation (summary/translation/etc.)."""
+    return bool(_TRANSFORM_INTENT_RE.search(message or ""))
+
+
+def _should_force_transcribe_plan(message: str) -> bool:
+    """Return True when media transcript requests should prefer ``transcribe``."""
+    if not (_has_transcribe_intent(message) or _has_transform_intent(message)):
+        return False
+
+    return _has_media_url(message)
+
+
+def _should_bypass_analysis_for_transcribe(message: str, clam: Clam) -> bool:
+    """Bypass analyzer for pure media transcript requests.
+
+    This preserves full transcript output for users asking only for
+    transcription (no summarization/translation/analysis).
+    """
+    if "transcribe" not in (clam.declared_tools or []):
+        return False
+    if not _has_media_url(message):
+        return False
+    if not _has_transcribe_intent(message):
+        return False
+    return not _has_transform_intent(message)
+
+
+def _should_force_full_output_analysis(message: str, clam: Clam) -> bool:
+    """Force analyzer full-output mode for media transform requests.
+
+    For requests like "transcribe and summarize", the analyzer should receive
+    untruncated transcript text to avoid summary quality loss.
+    """
+    if "transcribe" not in (clam.declared_tools or []):
+        return False
+    if not _has_media_url(message):
+        return False
+    return _has_transform_intent(message)
 
 
 def _rewrite_plan_for_transcribe(message: str, plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1067,11 +1113,33 @@ class AgentLoop:
                 events=events,
             )
 
+        # Pure transcript requests should return full runtime output verbatim.
+        # This avoids post-runtime analyzer summarization that can truncate
+        # or paraphrase long transcripts.
+        if _should_bypass_analysis_for_transcribe(message, clam):
+            logger.info(
+                "Bypassing post-runtime analysis for pure transcript request "
+                "(clam=%s)",
+                clam.name,
+            )
+            self._writer.promote(clam.name)
+            self._clam_registry.record_usage(clam.name)
+            return AgentResult(
+                content=runtime_result.output or "",
+                status="completed",
+                selection_reason=selection.reason,
+                runtime_result=runtime_result,
+                clam_name=clam.name,
+                events=events,
+            )
+
         # Post-runtime analysis
+        force_full_output = _should_force_full_output_analysis(message, clam)
         analysis_result = await self._analyzer.analyze(
             message=message,
             clam=clam,
             runtime_result=runtime_result,
+            full_output=force_full_output,
         )
 
         logger.debug(
